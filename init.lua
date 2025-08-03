@@ -50,6 +50,11 @@ require("lazy").setup({
             "markdown_inline",
             "latex",
             "lua",
+            "html",
+            "css",
+            "javascript",
+            "typescript",
+            "json",
             "python",
             "cpp"
           }, -- よく使う言語
