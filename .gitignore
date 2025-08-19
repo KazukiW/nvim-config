@@ -2,3 +2,12 @@
 lazy-lock.json
 plugin/packer_compiled.lua
 lazy/
+
+# Neovim / Vim temporary files
+*.swp
+*.swo
+*.swx
+*.tmp
+*.bak
+*.un~
+*~
