@@ -1,5 +1,5 @@
 -- Neovim configuration
--- Reviced : 2025/08/19
+-- Reviced : 2025/08/20
 -- Bootstrap lazy.nvim
 local lazypath = vim.fn.stdpath("config") .. "/lazy/lazy.nvim"
 if not vim.loop.fs_stat(lazypath) then
@@ -16,6 +16,7 @@ vim.opt.rtp:prepend(lazypath)
 vim.opt.clipboard = "unnamedplus"
 
 -- basic setting
+vim.opt.path:append({ ".", "**" })
 vim.opt.number = true
 vim.opt.relativenumber = true
 vim.opt.tabstop = 4
