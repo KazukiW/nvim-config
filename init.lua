@@ -64,6 +64,18 @@ require("lazy").setup({
     -- Git operation: fugitive
     {
         "tpope/vim-fugitive",
+        event = { "BufReadPost", "BufNewFile" },
+        init = function()
+          -- ここがポイント：fugitiveを起動する前にPTYモードを有効化
+          vim.g.fugitive_pty = 1
+        end,
+        keys = {
+          { "<leader>gs", "<cmd>Git<CR>", desc = "Fugitive: status" },
+          { "<leader>gb", "<cmd>Gblame<CR>", desc = "Fugitive: blame line" },
+          { "<leader>gd", "<cmd>Gvdiffsplit!<CR>", desc = "Fugitive: diff vs HEAD (vsplit)" },
+          { "<leader>gP", "<cmd>Git push<CR>", desc = "Fugitive: push" },
+          { "<leader>gL", "<cmd>Git pull<CR>", desc = "Fugitive: pull" },
+        },
         config = function()
             --define custom mappings here
             vim.keymap.set("n", "<leader>gs", "<cmd>Git<CR>", { desc = "Git Status" })
