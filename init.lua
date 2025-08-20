@@ -1,3 +1,6 @@
+-- Initialization for Neovim
+-- Reviced: 2025/08/21
+-- Block for Debug
 -- Logging keymap settings
 --local orig_keymap_set = vim.keymap.set
 --vim.keymap.set = function(mode, lhs, rhs, opts)
