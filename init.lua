@@ -29,60 +29,66 @@ vim.opt.foldexpr = "nvim_treesitter#foldexpr()"
 
 -- Load lazy.nvim
 require("lazy").setup({
-    -- Add plugins here
-    -- status line
-    { "nvim-lualine/lualine.nvim", dependencies = { "nvim-tree/nvim-web-devicons" } },
-    -- fuzzy finder
-    { "nvim-telescope/telescope.nvim", dependencies = { "nvim-lua/plenary.nvim" } },
-    -- fzf-native
-    { 
-      "nvim-telescope/telescope-fzf-native.nvim",
-      build = "make",
-      config = function()
-       require('telescope').load_extension('fzf')
-      end
-    },
-    -- treesitter
-    {
-      "nvim-treesitter/nvim-treesitter",
-      --build = ":TSUpdate",
-      config = function()
-        require("nvim-treesitter.configs").setup {
-          ensure_installed = {
-            "markdown",
-            "markdown_inline",
-            "latex",
-            "lua",
-            "python",
-            "cpp"
-          }, -- よく使う言語
-          highlight = { enable = true },
-          indent = { enable = true },
-        }
-      end
-    },
-    -- Git operation: fugitive
-    {
-        "tpope/vim-fugitive",
-        event = { "BufReadPost", "BufNewFile" },
-        init = function()
-          -- ここがポイント：fugitiveを起動する前にPTYモードを有効化
-          vim.g.fugitive_pty = 1
-        end,
-        keys = {
-          { "<leader>gs", "<cmd>Git<CR>", desc = "Fugitive: status" },
-          { "<leader>gb", "<cmd>Gblame<CR>", desc = "Fugitive: blame line" },
-          { "<leader>gd", "<cmd>Gvdiffsplit!<CR>", desc = "Fugitive: diff vs HEAD (vsplit)" },
-          { "<leader>gP", "<cmd>Git push<CR>", desc = "Fugitive: push" },
-          { "<leader>gL", "<cmd>Git pull<CR>", desc = "Fugitive: pull" },
+    spec = {
+        -- Add plugins here
+        -- status line
+        { "nvim-lualine/lualine.nvim", dependencies = { "nvim-tree/nvim-web-devicons" } },
+        -- fuzzy finder
+        { "nvim-telescope/telescope.nvim", dependencies = { "nvim-lua/plenary.nvim" } },
+        -- fzf-native
+        { 
+          "nvim-telescope/telescope-fzf-native.nvim",
+          build = "make",
+          config = function()
+           require('telescope').load_extension('fzf')
+          end
         },
-        config = function()
-            --define custom mappings here
-            vim.keymap.set("n", "<leader>gs", "<cmd>Git<CR>", { desc = "Git Status" })
-            vim.keymap.set("n", "<leader>gc", "<cmd>Git commit<CR>", { desc = "Git Commit" })
-            vim.keymap.set("n", "<leader>gh", "<cmd>Git push<CR>", { desc = "Git Push" })
-            vim.keymap.set("n", "<leader>gl", "<cmd>Git pull<CR>", { desc = "Git Pull" })
-        end
+        -- treesitter
+        {
+          "nvim-treesitter/nvim-treesitter",
+          --build = ":TSUpdate",
+          config = function()
+            require("nvim-treesitter.configs").setup {
+              ensure_installed = {
+                "markdown",
+                "markdown_inline",
+                "latex",
+                "lua",
+                "python",
+                "cpp"
+              }, -- よく使う言語
+              highlight = { enable = true },
+              indent = { enable = true },
+            }
+          end
+        },
+        -- Git operation: fugitive
+        {
+            "tpope/vim-fugitive",
+            event = { "BufReadPost", "BufNewFile" },
+            init = function()
+              -- ここがポイント：fugitiveを起動する前にPTYモードを有効化
+              vim.g.fugitive_pty = 1
+            end,
+            keys = {
+              { "<leader>gs", "<cmd>Git<CR>", desc = "Fugitive: status" },
+              { "<leader>gb", "<cmd>Gblame<CR>", desc = "Fugitive: blame line" },
+              { "<leader>gd", "<cmd>Gvdiffsplit!<CR>", desc = "Fugitive: diff vs HEAD (vsplit)" },
+              { "<leader>gP", "<cmd>Git push<CR>", desc = "Fugitive: push" },
+              { "<leader>gL", "<cmd>Git pull<CR>", desc = "Fugitive: pull" },
+            },
+            config = function()
+                --define custom mappings here
+                vim.keymap.set("n", "<leader>gs", "<cmd>Git<CR>", { desc = "Git Status" })
+                vim.keymap.set("n", "<leader>gc", "<cmd>Git commit<CR>", { desc = "Git Commit" })
+                vim.keymap.set("n", "<leader>gh", "<cmd>Git push<CR>", { desc = "Git Push" })
+                vim.keymap.set("n", "<leader>gl", "<cmd>Git pull<CR>", { desc = "Git Pull" })
+            end
+        },
+    },
+    rocks = {
+        enabled = false,   -- ← LuaRocks連携を丸ごと無効化
+        -- hererocks = false, -- Systemのluarocksだけ使いたい時はこう
     },
 })
 
