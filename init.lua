@@ -37,12 +37,20 @@ vim.opt.termguicolors = true
 vim.g.mapleader = " "
 vim.opt.foldmethod = "expr"
 vim.opt.foldexpr = "nvim_treesitter#foldexpr()"
+vim.g.python3_host_prog = vim.fn.expand("~/.venvs/nvim/bin/python")
+vim.g.loaded_node_provider = 0
+vim.g.loaded_ruby_provider = 0
 
 -- Load lazy.nvim
 require("lazy").setup({
     -- Add plugins here
     spec = {
       { import = "plugins" }, -- auto loads every file in lua/plugins/
+    },
+
+    rocks = {
+        enabled = false,
+        hererocks = false,
     },
 })
 
