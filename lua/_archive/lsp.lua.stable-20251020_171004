@@ -1,0 +1,226 @@
+-- plugins/lsp.lua (refactored: common utility + multi-language, mason only)
+-- NOTE: mason-lspconfig is intentionally NOT used (we start servers manually).
+-- This version avoids deprecated lspconfig.util helpers and uses vim.fs / vim.uv.
+
+vim.notify("[plugins/lsp.lua] refactored (vim.fs) loaded", vim.log.levels.INFO)
+
+return {
+  -- 1) Installer (binaries only)
+  { "williamboman/mason.nvim", build = ":MasonUpdate", config = true },
+
+  -- 2) neodev (must load before lua_ls attaches)
+  { "folke/neodev.nvim", lazy = true },
+
+  -- 3) LSP core (single entry point, handle all servers here)
+  {
+    "neovim/nvim-lspconfig",
+    lazy = false,
+    config = function()
+      local lspconfig = require("lspconfig")
+
+      -- ===================== LSP Common Utils =====================
+      local function make_caps()
+        local caps = vim.lsp.protocol.make_client_capabilities()
+        caps.textDocument = caps.textDocument or {}
+        caps.textDocument.diagnostic = { dynamicRegistration = false }
+        local ok, cmp_lsp = pcall(require, "cmp_nvim_lsp")
+        if ok then caps = vim.tbl_deep_extend("force", caps, cmp_lsp.default_capabilities()) end
+        return caps
+      end
+
+      local function dirname(p) return (p and #p > 0) and vim.fs.dirname(p) or nil end
+--      local function cwd() return (vim.uv or vim.loop).cwd() end
+      local uv = vim.uv or vim.loop
+      ---@cast uv table
+      local function cwd()
+        if uv and uv.cwd then return uv.cwd() end
+        return vim.fn.getcwd()
+      end
+
+      local function find_up(markers, startpath)
+        local hit = vim.fs.find(markers, { path = startpath, upward = true })[1]
+        return hit and dirname(hit) or nil
+      end
+
+      local function default_root(fname)
+        local start = (fname and #fname > 0) and fname or cwd()
+        return find_up({ ".git", ".hg", ".svn" }, start) or dirname(start) or cwd()
+      end
+
+      local function root_with(markers)
+        return function(fname)
+          local start = (fname and #fname > 0) and fname or cwd()
+          return find_up(markers, start) or default_root(fname)
+        end
+      end
+
+      local function build_cfg(name, conf)
+        if type(vim.lsp.config) == "function" then
+          local ok, cfg = pcall(function()
+            return vim.lsp.config(conf.name and conf or vim.tbl_extend("keep", { name = name }, conf))
+          end)
+          if ok and cfg then return cfg end
+          ok, cfg = pcall(function() return vim.lsp.config(name, conf) end)
+          if ok and cfg then return cfg end
+        end
+        return nil
+      end
+
+      local def = {}
+      def.ensure_server = function(args)
+        local name, fts = args.name, args.filetypes
+        local caps = make_caps()
+        local root_dir = args.root_dir or default_root
+
+        local cfg = build_cfg(name, {
+          name = name,
+          cmd = args.cmd,
+          root_dir = root_dir,
+          single_file_support = true,
+          capabilities = caps,
+          settings = args.settings,
+          on_init = function(client)
+            if args.on_init then pcall(args.on_init, client) end
+            client:notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+          end,
+          on_attach = function(client, bufnr)
+            if args.on_attach then pcall(args.on_attach, client, bufnr) end
+            client:notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+          end,
+        })
+
+        local start_fn
+        if cfg then
+          start_fn = function(buf) vim.lsp.start(cfg, { bufnr = buf }) end
+        else
+          if not lspconfig[name] then return end
+          if type(lspconfig[name].setup) ~= "function" then return end
+          lspconfig[name].setup({
+            root_dir = root_dir,
+            single_file_support = true,
+            capabilities = caps,
+            settings = args.settings,
+            on_init = function(client)
+              if args.on_init then pcall(args.on_init, client) end
+              client:notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+            end,
+            on_attach = function(client, bufnr)
+              if args.on_attach then pcall(args.on_attach, client, bufnr) end
+              client:notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+            end,
+          })
+          start_fn = function(buf)
+            if lspconfig[name].manager and lspconfig[name].manager.try_add then
+              lspconfig[name].manager:try_add(buf)
+            end
+          end
+        end
+
+        local function ensure(buf)
+          if not vim.api.nvim_buf_is_valid(buf) then return end
+          if not vim.tbl_contains(fts, vim.bo[buf].filetype) then return end
+          if #vim.lsp.get_clients({ bufnr = buf, name = name }) > 0 then return end
+          if start_fn then start_fn(buf) end
+        end
+
+        for _, c in ipairs(vim.lsp.get_clients({ name = name })) do pcall(function() c:stop() end) end
+
+        vim.api.nvim_create_autocmd("FileType", {
+          group = vim.api.nvim_create_augroup("lsp_once_" .. name, { clear = true }),
+          pattern = fts,
+          callback = function(a) ensure(a.buf) end,
+        })
+        ensure(0)
+
+        vim.api.nvim_create_autocmd("LspAttach", {
+          group = vim.api.nvim_create_augroup("lsp_dedupe_" .. name, { clear = true }),
+          callback = function(a)
+            local new = vim.lsp.get_client_by_id(a.data.client_id)
+            if not new or new.name ~= name then return end
+            local olds = {}
+            for _, c in ipairs(vim.lsp.get_clients({ bufnr = a.buf })) do
+              if c.name == name and c.id ~= new.id then table.insert(olds, c) end
+            end
+            table.sort(olds, function(x, y) return x.id < y.id end)
+            for _, c in ipairs(olds) do pcall(function() c:stop() end) end
+          end,
+        })
+      end
+      -- ===================== /LSP Common Utils =====================
+
+      -- -------- Lua (lua_ls) --------
+      def.ensure_server({
+        name = "lua_ls",
+        filetypes = { "lua" },
+        settings = {
+          Lua = {
+            runtime = { version = "LuaJIT" },
+            diagnostics = { globals = { "vim" } },
+            workspace = { checkThirdParty = false, library = vim.api.nvim_get_runtime_file("", true) },
+            telemetry = { enable = false },
+          },
+        },
+        on_init = function()
+          pcall(function() require("neodev").setup({}) end)
+        end,
+      })
+
+      -- -------- Python (pyright) --------
+      def.ensure_server({
+        name = "pyright",
+        filetypes = { "python" },
+        root_dir = root_with({ "pyproject.toml", "setup.cfg", "setup.py", "requirements.txt", ".git" }),
+        settings = {
+          python = {
+            analysis = {
+              autoSearchPaths = true,
+              diagnosticMode = "openFilesOnly",
+              useLibraryCodeForTypes = true,
+            },
+          },
+        },
+      })
+
+      -- -------- C/C++ (clangd) --------
+      def.ensure_server({
+        name = "clangd",
+        filetypes = { "c", "cpp", "objc", "objcpp", "cuda" },
+        cmd = { "clangd" },
+        root_dir = root_with({ "compile_commands.json", ".clangd", ".git" }),
+      })
+
+      -- -------- Web: HTML / CSS / Emmet --------
+      def.ensure_server({ name = "html",  filetypes = { "html" } })
+      def.ensure_server({ name = "cssls", filetypes = { "css", "scss", "less" } })
+      def.ensure_server({
+        name = "emmet_ls",
+        filetypes = { "html", "css", "scss", "less", "javascriptreact", "typescriptreact" },
+      })
+
+      -- -------- Electron (TS/JS) --------
+      local ts_name = (function()
+        local ok, lspc = pcall(require, "lspconfig")
+        if ok then
+          if lspc.ts_ls then return "ts_ls" end
+          if lspc.tsserver then return "tsserver" end
+        end
+        return "ts_ls"
+      end)()
+
+      def.ensure_server({
+        name = ts_name,
+        filetypes = { "typescript", "typescriptreact", "javascript", "javascriptreact" },
+        root_dir = root_with({ "tsconfig.json", "jsconfig.json", "package.json", ".git" }),
+      })
+    end,
+  },
+
+  -- 4) Formatter (minimal)
+  {
+    "stevearc/conform.nvim",
+    opts = {
+      formatters_by_ft = { lua = { "stylua" } },
+      notify_on_error = false,
+    },
+  },
+}

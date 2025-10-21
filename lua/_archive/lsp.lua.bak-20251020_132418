@@ -1,0 +1,138 @@
+vim.notify("[plugins/lsp.lua] loaded", vim.log.levels.INFO)
+
+return {
+  -- mason (installer only)
+  { "williamboman/mason.nvim", build = ":MasonUpdate", config = true },
+--  { "williamboman/mason-lspconfig.nvim", lazy = false, opts = { ensure_installed = { "lua_ls" }, handlers = {}, }, },
+--  { "williamboman/mason-lspconfig.nvim", lazy = false, opts = { ensure_installed = { "lua_ls" }, }, },
+
+
+  -- nvim-cmp (optional but common)
+  -- { "hrsh7th/cmp-nvim-lsp", lazy = true },
+
+
+  -- neodev (before lua_ls)
+  { "folke/neodev.nvim", lazy = true },
+
+
+  -- LSP core + **here we configure lua_ls** (no fake/standalone spec)
+  {
+    "neovim/nvim-lspconfig",
+    lazy = false,
+    config = function()
+      local lspconfig = require("lspconfig")
+      local util = require("lspconfig.util")
+
+      -- stop pre-existing lua_ls to avoid races with stale configs
+      for _, c in ipairs(vim.lsp.get_clients({ name = "lua_ls" })) do
+        pcall(function() c:stop() end)
+      end
+
+      -- neodev first (pcall for safety)
+      pcall(function() require("neodev").setup({}) end)
+
+
+      -- capabilities (Pull Diagnostics + nvim-cmp)
+      local capabilities = vim.lsp.protocol.make_client_capabilities()
+      capabilities.textDocument = capabilities.textDocument or {}
+      capabilities.textDocument.diagnostic = { dynamicRegistration = false }
+--    pcall(function()
+--      local cmp_caps = require("cmp_nvim_lsp").default_capabilities()
+--      capabilities = vim.tbl_deep_extend("force", capabilities, cmp_caps)
+--    end)
+
+      -- robust root detector
+      local function lua_ls_root(fname)
+
+        local path = (fname and #fname > 0) and fname or vim.loop.cwd()
+        local hit = vim.fs.find({ ".luarc.json", ".stylua.toml", ".git" }, { path = path, upward = true })[1]
+
+        if hit then return vim.fs.dirname(hit) end
+        local lua_dir = vim.fs.find("lua", { path = path, upward = true, type = "directory" })[1]
+
+        if lua_dir then return vim.fs.dirname(lua_dir) end
+        return util.path.dirname(path) or vim.loop.cwd()
+
+      end
+
+      -- single, minimal setup (this is THE only place we call setup)
+      lspconfig.lua_ls.setup({
+
+        capabilities = capabilities,
+
+
+        single_file_support = true,
+        root_dir = lua_ls_root,
+        settings = {
+
+
+          Lua = {
+            runtime = { version = "LuaJIT" },
+            diagnostics = { globals = { "vim" } },
+            workspace = { checkThirdParty = false, library = vim.api.nvim_get_runtime_file("", true) },
+            telemetry = { enable = false },
+
+          },
+
+        },
+        on_init = function(client)
+
+          client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+        end,
+        on_attach = function(client, bufnr)
+          client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+        end,
+      })
+
+
+      -- ensure current & future Lua buffers attach (even on fresh start)
+      local function try_attach(buf)
+        local ok = pcall(function() lspconfig.lua_ls.manager:try_add(buf) end)
+        if ok then vim.schedule(function() vim.notify("[lua_ls] try_add buf="..buf, vim.log.levels.DEBUG) end) end
+
+      end
+
+      try_attach(vim.api.nvim_get_current_buf())
+      vim.api.nvim_create_autocmd("FileType", {
+        group = vim.api.nvim_create_augroup("lua_ls_attach_once", { clear = true }),
+
+        pattern = "lua",
+        callback = function(args) try_attach(args.buf) end,
+      })
+
+
+      -- dedupe same-name clients per buffer (keep the newest)
+
+      vim.api.nvim_create_autocmd("LspAttach", {
+        group = vim.api.nvim_create_augroup("dedupe_lua_ls", { clear = true }),
+        callback = function(args)
+
+          local new = vim.lsp.get_client_by_id(args.data.client_id)
+          if not new or new.name ~= "lua_ls" then return end
+          local olds = {}
+          for _, c in ipairs(vim.lsp.get_clients({ bufnr = args.buf })) do
+            if c.name == "lua_ls" and c.id ~= new.id then table.insert(olds, c) end
+          end
+          table.sort(olds, function(a, b) return a.id < b.id end)
+          for _, c in ipairs(olds) do pcall(function() c:stop() end) end
+
+        end,
+      })
+
+    end,
+  },
+
+  -- tools/formatters (unchanged minimal example)
+
+  {
+    "stevearc/conform.nvim",
+
+    opts = {
+      formatters_by_ft = {
+        lua = { "stylua" },
+      },
+      notify_on_error = false,
+    },
+  },
+}
+

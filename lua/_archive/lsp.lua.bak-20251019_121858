@@ -1,0 +1,214 @@
+vim.notify("[plugins/lsp.lua] loaded", vim.log.levels.INFO)
+return {
+  -- { "neovim/nvim-lspconfig", cmd = { "LspInfo", "LspLog" } },
+  { "neovim/nvim-lspconfig", lazy = false },
+  { "williamboman/mason.nvim", build = ":MasonUpdate", config = true },
+  { "williamboman/mason-lspconfig.nvim", lazy = false },
+  { "folke/neodev.nvim", opts = {} }, -- ← A対応: neodev 追加
+  -- フォーマッタ/リンタの実体を Mason 経由で自動導入
+  {
+    "WhoIsSethDaniel/mason-tool-installer.nvim",
+    opts = {
+      ensure_installed = {
+        "stylua",        -- Lua
+
+        "shfmt",         -- shell
+        "black", "isort",-- Python
+        "jq",            -- JSON
+        "prettier",      -- JS/TS/MD/CSS/HTML
+
+        "clang-format",  -- C/C++
+
+      },
+      auto_update = false,    -- お好みで true でも
+      run_on_start = true,    -- Neovim起動時に未導入があれば入れる
+      start_delay = 1000,     -- 起動直後の混雑を避ける
+    },
+  },
+
+  {
+    "williamboman/mason-lspconfig.nvim",
+    dependencies = { "neovim/nvim-lspconfig" },
+
+    opts = { ensure_installed = { "lua_ls","pyright","clangd","bashls","jsonls","yamlls","marksman" } },
+    config = function(_, opts)
+      local lspconfig  = require("lspconfig")
+      local util = require("lspconfig.util")
+      local mlsp = require("mason-lspconfig")
+
+      -- capabilities（cmp が無くても落ちない）
+
+      -- local capabilities = vim.lsp.protocol.make_client_capabilities()
+      -- pcall(function() capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities) end)
+      local capabilities = vim.lsp.protocol.make_client_capabilities()
+      capabilities.textDocument = capabilities.textDocument or {}
+      capabilities.textDocument.diagnostics = { dynamicRegisration = false }
+      pcall(function() capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities) end)
+
+      -- 二重 setup 防止
+      vim.g.__lsp_configured = vim.g.__lsp_configured or {}
+      local function setup_once(name, conf)
+        if vim.g.__lsp_configured[name] then return end
+        vim.g.__lsp_configured[name] = true
+        lspconfig[name].setup(conf or {})
+      end
+
+      -- ===== ハンドラ定義（lua_ls/pyright 個別、他は既定） =====
+      local HANDLERS = {
+        -- 既定：pyright 以外は共通
+        function(server)
+          if server == "pyright" or server == "lua_ls" then return end
+          setup_once(server, { capabilities = capabilities })
+        end,
+
+        -- 個別：pyright
+        pyright = function()
+          setup_once("pyright", {
+            capabilities = capabilities,
+
+            single_file_support = false,
+            root_dir = function(fname)
+              return util.root_pattern("pyproject.toml","setup.cfg","setup.py",".git")(fname)
+
+                  or util.find_git_ancestor(fname)
+            end,
+            settings = { python = { analysis = {
+              autoSearchPaths = true, diagnosticMode = "openFilesOnly", useLibraryCodeForTypes = true
+            } } },
+          })
+        end,
+
+        -- 個別：lua_ls（B対応＋neodevの適用）
+        lua_ls = function()
+          -- 先に立っている lua_ls があれば止める（後勝ち・重複防止）
+          for _, c in ipairs(vim.lsp.get_clients({ name = "lua_ls" })) do
+            if c.stop then c:stop() end
+
+          end
+
+
+          -- neodev は lua_ls.setup より前
+          pcall(function() require("neodev").setup({}) end)
+
+          local util = require("lspconfig.util")
+          local function lua_ls_root(fname)
+            local path = (fname and #fname > 0) and fname or vim.loop.cwd()
+            local hit = vim.fs.find({ ".luarc.json", ".stylua.toml", ".git" }, { path = path, upward = true })[1]
+            if hit then return vim.fs.dirname(hit) end
+            local lua_dir = vim.fs.find("lua", { path = path, upward = true, type = "directory" })[1]
+            if lua_dir then return vim.fs.dirname(lua_dir) end
+            return util.path.dirname(path) or vim.loop.cwd()
+          end
+
+          require("lspconfig").lua_ls.setup({
+            capabilities = capabilities,          -- ★ ここで“最初の起動”に必ず渡す
+            single_file_support = true,
+            root_dir = lua_ls_root,
+            settings = {
+              Lua = {
+                runtime = { version = "LuaJIT" },
+                diagnostics = { globals = { "vim" } },
+                workspace = {
+
+                  checkThirdParty = false,
+
+                  library = vim.api.nvim_get_runtime_file("", true),
+                },
+                telemetry = { enable = false },
+              },
+            },
+          })
+        end,
+      }
+
+      -- ===== 互換分岐：setup_handlers が無い版にも対応 =====
+      opts = opts or {}
+
+      if type(mlsp.setup_handlers) == "function" then
+        mlsp.setup(opts)
+        mlsp.setup_handlers(HANDLERS)
+      else
+        -- 新API系：handlers を setup に渡す
+        local merged = vim.tbl_deep_extend("force", opts, { handlers = HANDLERS })
+        mlsp.setup(merged)
+      end
+
+      -- ===== 重複クライアントの整理（0.12対応: get_clients 使用） =====
+      vim.api.nvim_create_autocmd("LspAttach", {
+        group = vim.api.nvim_create_augroup("dedupe_lsp_clients", { clear = true }),
+
+        callback = function(args)
+          local new = vim.lsp.get_client_by_id(args.data.client_id)
+          if not new then return end
+
+          local clients = vim.lsp.get_clients({ bufnr = args.buf })
+          if #clients == 0 then clients = vim.lspconfig.get_clients() end
+
+
+          local old = {}
+          for _, c in ipairs(clients) do
+            if c.name == new.name and c.id ~= new.id then table.insert(old, c) end
+          end
+          table.sort(old, function(a, b) return a.id < b.id end)
+
+          for _, c in ipairs(old) do
+            if type(c.stop) == "function" then
+              pcall(c.stop, c, true)
+            else
+              pcall(vim.lspconfig.stop_client, c.id)
+            end
+
+          end
+
+        end,
+      })
+    end,
+  },
+
+  -- ===== completion =====
+  {
+    "hrsh7th/nvim-cmp",
+    dependencies = {
+      "hrsh7th/cmp-nvim-lsp",
+
+      "saadparwaiz1/cmp_luasnip",
+      {"L3MON4D3/LuaSnip", build = "make install_jsregexp" },
+      "rafamadriz/friendly-snippets",
+    },
+
+    config = function()
+      local cmp = require("cmp")
+      require("luasnip.loaders.from_vscode").lazy_load()
+
+      cmp.setup({
+        snippet = { expand = function(args) require("luasnip").lsp_expand(args.body) end },
+        mapping = cmp.mapping.preset.insert({
+          ["<C-n>"]=cmp.mapping.select_next_item(),
+          ["<C-p>"]=cmp.mapping.select_prev_item(),
+          ["<C-Space>"]=cmp.mapping.complete(),
+          ["<CR>"]=cmp.mapping.confirm({ select = true }),
+
+        }),
+        sources = cmp.config.sources(
+          { {name="nvim_lsp"}, {name="luasnip"} },
+          { {name="buffer"}, {name="path"} }
+        ),
+      })
+    end,
+  },
+
+
+  -- ===== formatter =====
+  {
+    "stevearc/conform.nvim",
+    opts = {
+      formatters_by_ft = {
+        lua={"stylua"}, sh={"shfmt"}, python={"black","isort"}, json={"jq"},
+        cpp={"clang-format"}, markdown={"prettier"},
+        javascript={"prettier"}, typescript={"prettier"}, css={"prettier"}, html={"prettier"},
+      },
+
+      notify_on_error = false,
+    },
+  },
+}

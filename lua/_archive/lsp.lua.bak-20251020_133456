@@ -1,0 +1,180 @@
+vim.notify("[plugins/lsp.lua] loaded", vim.log.levels.INFO)
+
+return {
+  -- mason (installer only)
+  { "williamboman/mason.nvim", build = ":MasonUpdate", config = true },
+  -- mason-lspconfig は使わず（競合源を断つ）
+
+  -- neodev（lua_ls より前）
+  { "folke/neodev.nvim", lazy = true },
+
+  -- LSP core：ここで lua_ls を 1 回だけ起動（互換対応込み）
+  {
+    "neovim/nvim-lspconfig",
+    lazy = false,
+    config = function()
+      local lspconfig = require("lspconfig")
+      local util = require("lspconfig.util")
+
+      -- 既存 lua_ls を止める（重複防止）
+      for _, c in ipairs(vim.lsp.get_clients({ name = "lua_ls" })) do pcall(function() c:stop() end) end
+
+      -- neodev を先に
+      pcall(function() require("neodev").setup({}) end)
+
+      -- capabilities（Pull Diagnostics）
+
+      local capabilities = vim.lsp.protocol.make_client_capabilities()
+      capabilities.textDocument = capabilities.textDocument or {}
+      capabilities.textDocument.diagnostic = { dynamicRegistration = false }
+
+      -- ルート検出（必ず何か返す）
+      local function lua_ls_root(fname)
+        local path = (fname and #fname > 0) and fname or vim.loop.cwd()
+        local hit = vim.fs.find({ ".luarc.json", ".stylua.toml", ".git" }, { path = path, upward = true })[1]
+        if hit then return vim.fs.dirname(hit) end
+        local lua_dir = vim.fs.find("lua", { path = path, upward = true, type = "directory" })[1]
+        if lua_dir then return vim.fs.dirname(lua_dir) end
+        return util.path.dirname(path) or vim.loop.cwd()
+      end
+
+      -- 互換：vim.lsp.config の新旧双方に対応し、失敗したら lspconfig.setup にフォールバック
+      local cfg
+      local ok = false
+      if type(vim.lsp.config) == "function" then
+
+        ok, cfg = pcall(function()
+          -- Neovim 0.11+（テーブル引数）
+          return vim.lsp.config({
+            name = "lua_ls",
+
+            cmd = { "lua-language-server" },
+            root_dir = lua_ls_root,
+            single_file_support = true,
+            capabilities = capabilities,
+            settings = {
+              Lua = {
+                runtime = { version = "LuaJIT" },
+                diagnostics = { globals = { "vim" } },
+                workspace = { checkThirdParty = false, library = vim.api.nvim_get_runtime_file("", true) },
+                telemetry = { enable = false },
+
+              },
+            },
+            on_init = function(client)
+              client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+            end,
+
+            on_attach = function(client, bufnr)
+              client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+            end,
+          })
+        end)
+        if not ok then
+          ok, cfg = pcall(function()
+
+            -- 旧シグネチャ：vim.lsp.config(name, config)
+            return vim.lsp.config("lua_ls", {
+              cmd = { "lua-language-server" },
+              root_dir = lua_ls_root,
+              single_file_support = true,
+              capabilities = capabilities,
+              settings = {
+                Lua = {
+                  runtime = { version = "LuaJIT" },
+                  diagnostics = { globals = { "vim" } },
+                  workspace = { checkThirdParty = false, library = vim.api.nvim_get_runtime_file("", true) },
+
+                  telemetry = { enable = false },
+
+                },
+              },
+              on_init = function(client)
+                client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+              end,
+              on_attach = function(client, bufnr)
+                client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+              end,
+            })
+          end)
+
+        end
+      end
+
+      -- cfg が作れなければ lspconfig にフォールバック
+      local start_with_cfg = function(buf)
+        if ok and cfg then
+          vim.lsp.start(cfg, { bufnr = buf })
+        else
+          lspconfig.lua_ls.setup({
+            capabilities = capabilities,
+            single_file_support = true,
+            root_dir = lua_ls_root,
+            settings = {
+              Lua = {
+                runtime = { version = "LuaJIT" },
+                diagnostics = { globals = { "vim" } },
+                workspace = { checkThirdParty = false, library = vim.api.nvim_get_runtime_file("", true) },
+
+                telemetry = { enable = false },
+              },
+            },
+            on_init = function(client)
+              client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+            end,
+            on_attach = function(client, bufnr)
+              client.notify("workspace/didChangeConfiguration", { settings = client.config.settings or {} })
+            end,
+          })
+          lspconfig.lua_ls.manager:try_add(buf)
+
+        end
+      end
+
+      -- 必要時のみ起動（即起動しない）
+
+      local function ensure_lua_ls(buf)
+        if vim.bo[buf].filetype ~= "lua" then return end
+        if #vim.lsp.get_clients({ bufnr = buf, name = "lua_ls" }) > 0 then return end
+        start_with_cfg(buf)
+      end
+
+      -- 以後の Lua バッファ
+      vim.api.nvim_create_autocmd("FileType", {
+        group = vim.api.nvim_create_augroup("lua_ls_attach_once", { clear = true }),
+        pattern = "lua",
+        callback = function(a) ensure_lua_ls(a.buf) end,
+      })
+
+      -- 現在のバッファにも必要なら起動
+      ensure_lua_ls(0)
+
+      -- 同名クライアントの多重起動を整理
+      vim.api.nvim_create_autocmd("LspAttach", {
+        group = vim.api.nvim_create_augroup("dedupe_lua_ls", { clear = true }),
+        callback = function(a)
+          local new = vim.lsp.get_client_by_id(a.data.client_id)
+          if not new or new.name ~= "lua_ls" then return end
+          local olds = {}
+          for _, c in ipairs(vim.lsp.get_clients({ bufnr = a.buf })) do
+            if c.name == "lua_ls" and c.id ~= new.id then table.insert(olds, c) end
+          end
+          table.sort(olds, function(x,y) return x.id < y.id end)
+          for _, c in ipairs(olds) do pcall(function() c:stop() end) end
+
+        end,
+      })
+    end,
+  },
+
+  -- formatter（必要最小）
+  {
+
+    "stevearc/conform.nvim",
+    opts = {
+      formatters_by_ft = { lua = { "stylua" } },
+      notify_on_error = false,
+    },
+  },
+}
+

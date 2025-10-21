@@ -1,0 +1,176 @@
+-- 基本オプション
+vim.g.mapleader = " "
+vim.opt.termguicolors = true
+vim.opt.number = true
+vim.opt.relativenumber = true
+vim.opt.signcolumn = "yes"
+vim.opt.updatetime = 200
+vim.opt.clipboard = "unnamedplus"
+
+-- （WSLなら）win32yank でクリップボード連携
+if vim.fn.has("wsl") == 1 and vim.fn.executable("win32yank.exe") == 1 then
+  vim.g.clipboard = {
+    name = "win32yank-wsl",
+    copy  = {
+        ["+"] = {"win32yank.exe", "-i", "--crlf"},
+        ["*"] = {"win32yank.exe", "-i", "--crlf"},
+    },
+    paste = {
+	["+"] = {"win32yank.exe", "-o", "--lf"},
+	["*"] = {"win32yank.exe", "-o", "--lf"},
+    },
+    cache_enabled = 0,
+  }
+end
+
+
+-- lazy.nvim bootstrap
+local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
+if not (vim.uv or vim.loop).fs_stat(lazypath) then
+  vim.fn.system({ "git", "clone", "--filter=blob:none",
+    "https://github.com/folke/lazy.nvim.git", lazypath })
+end
+vim.opt.rtp:prepend(lazypath)
+
+-- ==== LSP setup 呼び出し元トレース（暫定デバッグ） ====
+do
+  local ok, lsp = pcall(require, "lspconfig")
+  if ok then
+    for name, server in pairs(lsp) do
+      if type(server) == "table" and type(server.setup) == "function" then
+        local orig = server.setup
+        lsp[name].setup = function(conf)
+          local info = debug.getinfo(2, "Sl")
+          vim.schedule(function()
+            vim.notify(("LSP SETUP: %s  <- %s:%d")
+              :format(name, info.short_src or "?", info.currentline or -1))
+          end)
+          return orig(conf)
+        end
+      end
+    end
+  end
+end
+
+-- プラグイン定義
+local plugins = {
+  -- Mason 本体
+  { "williamboman/mason.nvim", build = ":MasonUpdate", config = true },
+
+  -- Mason ←→ lspconfig 橋渡し（ここで“起動”までやる）
+  {
+    "williamboman/mason-lspconfig.nvim",
+    opts = {
+      ensure_installed = { "clangd", "pyright", "lua_ls", "bashls" },
+    },
+    config = function(_, opts)
+      -- このセッションでは一度だけ初期化
+      if vim.g.__lsp_boot_done then return end
+      vim.g.__lsp_boot_done = true
+    
+      local lsp  = require("lspconfig")
+      local util = require("lspconfig.util")
+      local mlsp = require("mason-lspconfig")
+    
+      -- cmp が無くても落ちない capabilities
+      local cap = nil
+      local ok_cmp, cmp_caps = pcall(function()
+        return require("cmp_nvim_lsp").default_capabilities()
+      end)
+      if ok_cmp then cap = cmp_caps end
+    
+      -- 一度だけ setup するヘルパ
+      vim.g.__lsp_configured = vim.g.__lsp_configured or {}
+      local configured = vim.g.__lsp_configured
+      local function setup_once(name, conf)
+        if configured[name] then return end
+        configured[name] = true
+        lsp[name].setup(conf or {})
+      end
+    
+      -- 共通/個別ハンドラをテーブルに作る（v2 用）
+      local H = {
+        -- 既定：pyright 以外
+        function(server)
+          if server == "pyright" then return end
+          setup_once(server, { capabilities = cap })
+        end,
+        -- 個別：pyright
+        pyright = function()
+          setup_once("pyright", {
+            capabilities = cap,
+            single_file_support = false,
+            root_dir = function(fname)
+              return util.root_pattern("pyproject.toml","setup.cfg","setup.py",".git")(fname)
+                  or (util.find_git_ancestor and util.find_git_ancestor(fname))
+              -- ※CWD フォールバックは外す方が安全
+            end,
+            settings = {
+              python = { analysis = {
+                autoSearchPaths = true,
+                diagnosticMode = "openFilesOnly",
+                useLibraryCodeForTypes = true,
+              }},
+            },
+          })
+        end,
+      }
+    
+      -- v1/v2 互換：handlers の渡し方が違う
+      if type(require("mason-lspconfig").setup_handlers) == "function" then
+        -- v1: 先に setup だけ済ませ、handlers は別 API で登録
+        mlsp.setup(opts or {})
+        mlsp.setup_handlers(H)
+      else
+        -- v2: handlers は setup の引数で渡す
+        mlsp.setup(vim.tbl_extend("force", opts or {}, { handlers = H }))
+      end
+    
+      -- 念のため：重複クライアントを即時整理（保険）
+      vim.api.nvim_create_autocmd("LspAttach", {
+        group = vim.api.nvim_create_augroup("dedupe_lsp_clients", { clear = true }),
+        callback = function(args)
+          local new = vim.lsp.get_client_by_id(args.data.client_id)
+          if not new then return end
+          local same = vim.tbl_filter(function(c) return c.name == new.name end,
+                                      vim.lsp.get_active_clients())
+          table.sort(same, function(a, b) return a.id < b.id end)
+          for i = 1, #same - 1 do pcall(vim.lsp.stop_client, same[i].id) end
+        end,
+      })
+    end
+  },
+
+  -- lspconfig 本体（依存として読み込むだけ）
+  { "neovim/nvim-lspconfig" },
+
+  -- （お好みで）ステータスライン
+  { "nvim-lualine/lualine.nvim",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    config = function()
+      require("lualine").setup({ options = { theme = "auto", globalstatus = true } })
+    end
+  },
+}
+
+require("lazy").setup(plugins, {
+  rocks = { enabled = false }, -- LuaRocks連携は当面OFF
+})
+
+-- 便利キーマップ（LSPまわり最低限）
+local on_attach = function(_, bufnr)
+  local map = function(m, lhs, rhs) vim.keymap.set(m, lhs, rhs, { buffer = bufnr }) end
+  map("n", "gd", vim.lsp.buf.definition)
+  map("n", "gr", vim.lsp.buf.references)
+  map("n", "K",  vim.lsp.buf.hover)
+  map("n", "<leader>rn", vim.lsp.buf.rename)
+  map("n", "<leader>ca", vim.lsp.buf.code_action)
+end
+
+-- 既存サーバにも適用されるよう hook（nvim 0.11+）
+vim.api.nvim_create_autocmd("LspAttach", {
+  callback = function(args)
+    local bufnr = args.buf
+    on_attach(vim.lsp.get_client_by_id(args.data.client_id), bufnr)
+  end,
+})
