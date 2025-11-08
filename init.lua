@@ -42,6 +42,10 @@ require("lazy").setup({
   spec = { { import = "plugins" } },
   ui = { border = "rounded" },
   rocks = { enabled = false },
+
+  pcall(function()
+    vim.keymap.del("n", "gc")  -- 短い方だけ削除
+  end)
 })
 
 -- ----- LuaSnip jsregexp: C拡張の検索パスを追加 -----
