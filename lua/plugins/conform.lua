@@ -26,4 +26,25 @@ return {
 			timeout_ms = 500,
 		},
 	},
+
+	keys = {
+		{
+			"<leader>f",
+			"<cmd>Format<CR>",
+			mode = "n",
+			desc = "Format buffer (conform)",
+		},
+	},
+
+	config = function(_, opts)
+		local conform = require("conform")
+
+		-- "opts"セットアップ
+		conform.setup(opts)
+
+		-- コマンドセットアップ :Format
+		vim.api.nvim_create_user_command("Format", function()
+			conform.format({ async = true, lsp_fallback = false })
+		end, {})
+	end,
 }

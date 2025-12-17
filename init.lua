@@ -31,7 +31,9 @@ vim.g.loaded_ruby_provider = 0
 
 -- ===== lazy.nvim bootstrap =====
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not (vim.uv or vim.loop).fs_stat(lazypath) then
+---@type any
+local uv = vim.uv or vim.loop
+if uv.fs_stat(lazypath) then
 	vim.fn.system({
 		"git",
 		"clone",
@@ -62,15 +64,15 @@ do
 end
 
 -- ----- LuaSnip jsregexp: 旧名 → 新名の互換レイヤ -----
-do
-	local ok = pcall(require, "luasnip-jsregexp")
-	if ok then
-		-- "luasnip.extras._jsregexp" を要求されたら "luasnip-jsregexp" を返す
-		package.preload["luasnip.extras._jsregexp"] = function()
-			return require("luasnip-jsregexp")
-		end
-	end
-end
+-- do
+-- 	local ok = pcall(require, "luasnip-jsregexp")
+-- 	if ok then
+-- 		-- "luasnip.extras._jsregexp" を要求されたら "luasnip-jsregexp" を返す
+-- 		package.preload["luasnip.extras._jsregexp"] = function()
+-- 			return require("luasnip-jsregexp")
+-- 		end
+-- 	end
+-- end
 
 -- ===== Common LSP keymaps =====
 -- local function on_attach(_, bufnr)
