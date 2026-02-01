@@ -24,6 +24,54 @@ if vim.fn.has("wsl") == 1 and vim.fn.executable("win32yank.exe") == 1 then
 	}
 end
 
+-- SSH中は勝手にOSクリップボードへ同期しない（"+y のときだけ）
+vim.opt.clipboard = vim.env.SSH_TTY and "" or "unnamedplus"
+
+local function b64_encode(text)
+  -- できればNeovim内蔵を使う（0.11なら大抵ある）
+  if vim.base64 and vim.base64.encode then
+    return vim.base64.encode(text)
+  end
+  -- 最後の保険：外部 base64（改行は潰す）
+  local out = vim.fn.system("base64", text)
+  return (out:gsub("\n", ""))
+end
+
+local function osc52_write(payload)
+  io.stdout:write(payload)
+  io.stdout:flush()
+end
+
+local function osc52_copy(lines, _)
+  local text = table.concat(lines, "\n")
+  local b64 = b64_encode(text)
+
+  -- 生OSC52
+  local osc = "\027]52;c;" .. b64 .. "\007"
+
+  -- 外側がtmux(WSL)なら、tmux用DCSラップで“通過”させる
+  if vim.env.NVIM_OSC52_TMUX == "1" then
+    -- tmuxはDCSの中ではESCを二重化して渡す必要がある
+    local inner = osc:gsub("\027", "\027\027")
+    osc = "\027Ptmux;" .. inner .. "\027\\"
+  end
+
+  osc52_write(osc)
+end
+
+if vim.env.SSH_TTY then
+  vim.g.clipboard = {
+    name = "OSC52 (tmux wrapped)",
+    copy = { ["+"] = osc52_copy, ["*"] = osc52_copy },
+    -- 低リスク：pasteは無効（ローカルreadbackを開けない）
+    paste = {
+      ["+"] = function() return {} end,
+      ["*"] = function() return {} end,
+    },
+  }
+end
+
+
 -- Neovim用 Python ホスト（専用venv）
 vim.g.python3_host_prog = vim.fn.expand("~/.venvs/nvim/bin/python")
 vim.g.loaded_perl_provider = 0

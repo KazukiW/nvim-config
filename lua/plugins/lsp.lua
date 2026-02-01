@@ -147,7 +147,7 @@ return {
 			})
 
 			-- taplo
-			lsp.config("taple", {
+			lsp.config("taplo", {
 				root_markers = {
 					"pyproject.toml",
 					"Cargo.toml",
@@ -155,13 +155,6 @@ return {
 				},
 				single_file_support = true,
 			})
-
-			-- 各言語サーバの有効化
-			local enable_list = {
-				"lua_ls",
-				"clangd",
-			}
-			lsp.enable(enable_list)
 
 			-- pyright (Python)
 			lsp.config("pyright", {
@@ -257,6 +250,19 @@ return {
 					".git",
 				},
 			})
+
+			-- 各言語サーバの有効化
+			local enable_list = {
+				"lua_ls",
+				"clangd",
+                "pyright",
+                "html",
+                "cssls",
+                "emmet_ls",
+                "ts_ls",
+                "marksman",
+			}
+			lsp.enable(enable_list)
 
 			-----------------------------------------------------------------------
 			-- 4. ログレベル（必要になったときだけ INFO/DEBUG に上げる）
