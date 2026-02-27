@@ -17,7 +17,7 @@ end, { desc = "Edit plugin specs" })
 -- codex CLI用のconfigディレクトリを開く
 map("n", "<leader>vx", function()
 	vim.cmd.edit(codex)
-end, { desc = "Jump to codex session" })
+end, { desc = "Jump to codex session file" })
 
 -- utils.lua or keymaps.lua 等に配置
 -- 依存: jq が PATH 上にあること

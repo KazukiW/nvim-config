@@ -2,12 +2,13 @@
 return {
 	"stevearc/conform.nvim",
 	event = { "BufWritePre" }, -- 保存時フォーマットにするなら
+	cmd = { "ConformInfo", "Conform" },
 	opts = {
 		formatters_by_ft = {
 			lua = { "stylua" },
 			python = { "isort", "black" }, -- or "black"
-			cpp = { "clang_format" },
-			c = { "clang_format" },
+			cpp = { "clang-format" },
+			c = { "clang-format" },
 			javascript = { "prettier" },
 			javascriptreact = { "prettier" },
 			typescript = { "prettier" },
@@ -23,7 +24,7 @@ return {
 		-- ひとまず "fallback" にしておくと安全
 		format_on_save = {
 			lsp_fallback = true,
-			timeout_ms = 500,
+			timeout_ms = 3000,
 		},
 	},
 

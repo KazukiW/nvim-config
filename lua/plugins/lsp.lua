@@ -96,12 +96,12 @@ return {
 
 			-- 3-1. query-driver を組み立てる（Pico 用クロスコンパイラ優先）
 			local query = vim.fn.exepath("arm-none-eabi-gcc")
-			if query == "" then
-				-- 見つからないときのフォールバック
-				query = "/usr/bin/arm-none-eabi-*"
-			else
-				query = query:gsub("gcc$", "*")
-			end
+			-- 			if query == "" then
+			-- 				-- 見つからないときのフォールバック
+			-- 				query = "/usr/bin/arm-none-eabi-*"
+			-- 			else
+			-- 				query = query:gsub("gcc$", "*")
+			-- 			end
 
 			-- clangd
 			lsp.config("clangd", {
@@ -257,6 +257,19 @@ return {
 					".git",
 				},
 			})
+
+			-- 各言語サーバの有効化
+			local enable_list = {
+				"lua_ls",
+				"clangd",
+				"pyright",
+				"html",
+				"cssls",
+				"emmet_ls",
+				"ts_ls",
+				"marksman",
+			}
+			lsp.enable(enable_list)
 
 			-----------------------------------------------------------------------
 			-- 4. ログレベル（必要になったときだけ INFO/DEBUG に上げる）
